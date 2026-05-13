@@ -79,8 +79,28 @@ def _pil_to_pixbuf(img: Image.Image) -> GdkPixbuf.Pixbuf:
     return loader.get_pixbuf()
 
 
+def _pil_to_input_region(img: Image.Image) -> cairo.Region:
+    """Build a cairo.Region covering pixels with alpha > 10 (run-length per row)."""
+    w, h   = img.size
+    data   = img.tobytes()   # RGBA bytes, row-major
+    stride = w * 4
+    region = cairo.Region()
+    for y in range(h):
+        x = 0
+        while x < w:
+            while x < w and data[y * stride + x * 4 + 3] <= 10:
+                x += 1
+            if x >= w:
+                break
+            start = x
+            while x < w and data[y * stride + x * 4 + 3] > 10:
+                x += 1
+            region.union_rectangle(cairo.RectangleInt(start, y, x - start, 1))
+    return region
+
+
 def _load_pet(zip_path: str, scale: float):
-    """Return (display_name, pixbufs[row][frame], anims{name:(row,nf,fps)})."""
+    """Return (display_name, pixbufs[row][frame], regions[row][frame], anims)."""
     tmp = tempfile.mkdtemp()
     try:
         with zipfile.ZipFile(zip_path) as z:
@@ -100,17 +120,21 @@ def _load_pet(zip_path: str, scale: float):
             for aname, (row, fps) in ANIM_DEFS.items()
         }
         pixbufs: list[list[GdkPixbuf.Pixbuf]] = []
+        regions: list[list[cairo.Region]]      = []
         for row in range(ROWS):
-            row_pbs = []
+            row_pbs  = []
+            row_regs = []
             for col in range(row_frames[row]):
                 tile = sheet.crop((col * TILE_W, row * TILE_H,
                                    (col + 1) * TILE_W, (row + 1) * TILE_H))
                 if scale != 1.0:
                     tile = tile.resize((tw, th), Image.LANCZOS)
                 row_pbs.append(_pil_to_pixbuf(tile))
+                row_regs.append(_pil_to_input_region(tile))
             pixbufs.append(row_pbs)
+            regions.append(row_regs)
 
-        return name, pixbufs, anims
+        return name, pixbufs, regions, anims
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -253,12 +277,18 @@ class DesktopPet(Gtk.Window):
 
         GLib.timeout_add(16, self._tick)
         self.show_all()
+        # Apply initial input shape after the window is realized
+        GLib.idle_add(self._update_input_shape)
 
     # ── Pet loading ───────────────────────────────────────────────────────────
 
     def _load(self, zip_path: str):
         self._zip_path = zip_path
-        self._name, self._pixbufs, self._anims = _load_pet(zip_path, self._scale)
+        self._name, self._pixbufs, self._regions, self._anims = _load_pet(zip_path, self._scale)
+
+    def _update_input_shape(self):
+        row = self._anims[self._anim][0]
+        self.input_shape_combine_region(self._regions[row][self._fidx])
 
     def _switch_pet(self, zip_path: str):
         self._load(zip_path)
@@ -267,6 +297,7 @@ class DesktopPet(Gtk.Window):
         self._ftimer = 0.0
         self._state  = "idle"
         self._stimer = random.uniform(4.0, 8.0)
+        self._update_input_shape()
         self.queue_draw()
 
     # ── Context menu ──────────────────────────────────────────────────────────
@@ -499,9 +530,12 @@ class DesktopPet(Gtk.Window):
         # Always advance animation frame
         _, nf, fps = self._anims[self._anim]
         self._ftimer += dt
+        prev_fidx = self._fidx
         if self._ftimer >= 1.0 / fps:
             self._ftimer = 0.0
             self._fidx   = (self._fidx + 1) % nf
+        if self._fidx != prev_fidx:
+            self._update_input_shape()
 
         # Freeze state machine while being dragged
         if self._dragging:
