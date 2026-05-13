@@ -21,6 +21,7 @@ import cairo
 from PIL import Image
 
 PETS_DIR       = os.path.expanduser("~/pets")
+PETS_DIR_ALT   = os.path.expanduser("~/.codex/pets")
 TILE_W, TILE_H = 192, 208
 COLS, ROWS     = 8, 9
 
@@ -44,13 +45,13 @@ SLEEP_AFTER = 60.0  # seconds idle before sleeping
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def list_pets() -> list[str]:
-    if not os.path.isdir(PETS_DIR):
-        return []
-    return sorted(
-        os.path.join(PETS_DIR, f)
-        for f in os.listdir(PETS_DIR)
-        if f.endswith(".codex-pet.zip")
-    )
+    found = {}
+    for d in (PETS_DIR, PETS_DIR_ALT):
+        if os.path.isdir(d):
+            for f in os.listdir(d):
+                if f.endswith(".codex-pet.zip"):
+                    found.setdefault(f, os.path.join(d, f))
+    return sorted(found.values(), key=os.path.basename)
 
 
 def _count_frames(sheet: Image.Image, row: int) -> int:
