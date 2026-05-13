@@ -13,7 +13,10 @@ Controls:
   Right-click    Context menu: change pet · toggle movement · quit
 """
 
-import gi, sys, os, io, json, math, random, time, tempfile, zipfile, shutil
+import sys, os, io, json, math, random, time, tempfile, zipfile, shutil
+# Force X11 backend so window.move() works (Wayland ignores it)
+os.environ.setdefault('GDK_BACKEND', 'x11')
+import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('GdkPixbuf', '2.0')
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
@@ -228,69 +231,123 @@ class DesktopPet(Gtk.Window):
 
     # ── Context menu ──────────────────────────────────────────────────────────
 
+    _MENU_CSS = b"""
+        window { background:#2b2d30; border:1px solid #555; }
+        button { color:#dce0e8; padding:5px 20px; background:transparent;
+                 border:none; border-radius:0; font-size:13px; }
+        button:hover { background:#3574f0; color:#ffffff; }
+        .sep { background:#4a4a4a; min-height:1px; margin:2px 0; }
+    """
+
     def _show_menu(self, ev):
-        menu = Gtk.Menu()
+        # Transparent full-screen overlay: catches every click outside the menu
+        overlay = Gtk.Window(Gtk.WindowType.POPUP)
+        vis = Gdk.Screen.get_default().get_rgba_visual()
+        if vis:
+            overlay.set_visual(vis)
+        overlay.set_app_paintable(True)
+        overlay.connect("draw", lambda w, cr: (
+            cr.set_operator(cairo.OPERATOR_SOURCE),
+            cr.set_source_rgba(0, 0, 0, 0),
+            cr.paint()
+        ))
+        overlay.resize(self._sw, self._sh)
+        overlay.move(0, 0)
+        overlay.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+        overlay.show_all()
 
-        pets = list_pets()
-        if pets:
-            pets_item = Gtk.MenuItem(label="Change pet")
-            pets_sub  = Gtk.Menu()
-            for path in pets:
-                try:
-                    with zipfile.ZipFile(path) as z:
-                        label = json.loads(z.read("pet.json")).get(
-                            "displayName",
-                            os.path.basename(path).replace(".codex-pet.zip", "")
-                        )
-                except Exception:
-                    label = os.path.basename(path).replace(".codex-pet.zip", "")
-                item = Gtk.CheckMenuItem(label=("★ " if path == self._zip_path else "") + label)
-                item.set_draw_as_radio(True)
-                item.set_active(path == self._zip_path)
-                item.connect("activate", lambda _, p=path: self._switch_pet(p))
-                pets_sub.append(item)
-            pets_item.set_submenu(pets_sub)
-            menu.append(pets_item)
-            menu.append(Gtk.SeparatorMenuItem())
+        # Menu popup (shown after overlay so it sits on top)
+        popup = Gtk.Window(Gtk.WindowType.POPUP)
+        popup.set_decorated(False)
 
-        move_item = Gtk.CheckMenuItem(label="Enable movement")
-        move_item.set_active(self._moving)
-        move_item.connect("toggled", self._on_toggle_move)
-        menu.append(move_item)
+        provider = Gtk.CssProvider()
+        provider.load_from_data(self._MENU_CSS)
+        def sp(w):
+            w.get_style_context().add_provider(
+                provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+        popup.get_style_context().add_provider(
+            provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
 
-        startup_item = Gtk.CheckMenuItem(label="Run on startup")
-        startup_item.set_active(_autostart_enabled())
-        startup_item.connect("toggled", self._on_toggle_startup)
-        menu.append(startup_item)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        popup.add(box)
 
-        menu.append(Gtk.SeparatorMenuItem())
+        def close():
+            self._menu_close_fn = None
+            overlay.destroy()
+            popup.destroy()
 
-        quit_item = Gtk.MenuItem(label="Quit")
-        quit_item.connect("activate", lambda _: Gtk.main_quit())
-        menu.append(quit_item)
+        self._menu_close_fn = close
+        overlay.connect("button-press-event", lambda *_: close() or True)
 
-        menu.show_all()
-        menu.popup_at_pointer(ev)
+        def row(label, cb):
+            b = Gtk.Button(label=label)
+            b.set_relief(Gtk.ReliefStyle.NONE)
+            sp(b)
+            b.connect("clicked", lambda _: (close(), cb()))
+            box.pack_start(b, False, False, 0)
 
-    def _on_toggle_move(self, item):
-        self._moving = item.get_active()
-        if self._moving:
+        def sep():
+            s = Gtk.Separator()
+            s.get_style_context().add_class("sep")
+            sp(s)
+            box.pack_start(s, False, False, 0)
+
+        # Pet list (flat, no submenu)
+        for path in list_pets():
+            try:
+                with zipfile.ZipFile(path) as z:
+                    name = json.loads(z.read("pet.json")).get(
+                        "displayName",
+                        os.path.basename(path).replace(".codex-pet.zip", "")
+                    )
+            except Exception:
+                name = os.path.basename(path).replace(".codex-pet.zip", "")
+            mark = "● " if path == self._zip_path else "  "
+            p = path
+            row(mark + name, lambda pp=p: self._switch_pet(pp))
+        sep()
+
+        move_mark = "☑  " if self._moving else "☐  "
+        row(move_mark + "Enable movement", lambda: self._apply_moving(not self._moving))
+
+        start_mark = "☑  " if _autostart_enabled() else "☐  "
+        row(start_mark + "Run on startup",
+            lambda: _write_autostart(self._zip_path, self._scale)
+                    if not _autostart_enabled() else _remove_autostart())
+        sep()
+        row("Quit", Gtk.main_quit)
+
+        popup.show_all()
+        w, h = popup.get_size()
+        x = min(int(ev.x_root), max(0, self._sw - w))
+        y = min(int(ev.y_root), max(0, self._sh - h))
+        popup.move(x, y)
+
+        # Ensure menu is stacked above overlay
+        def raise_popup():
+            gdk_win = popup.get_window()
+            if gdk_win:
+                gdk_win.raise_()
+            return False
+        GLib.idle_add(raise_popup)
+
+    def _apply_moving(self, val: bool):
+        self._moving = val
+        if val:
             self._enter("walking")
         elif self._state == "walking":
             self._enter("idle")
-
-    def _on_toggle_startup(self, item):
-        if item.get_active():
-            _write_autostart(self._zip_path, self._scale)
-        else:
-            _remove_autostart()
 
     # ── Input ─────────────────────────────────────────────────────────────────
 
     def _on_press(self, _, ev):
         if ev.button == 3:
             self._show_menu(ev)
-            return
+            return True
+        fn = getattr(self, '_menu_close_fn', None)
+        if fn:
+            fn()
+            return True
         self._last_drag_x = ev.x_root
         self._last_drag_y = ev.y_root
         self._dragging = False
@@ -332,7 +389,7 @@ class DesktopPet(Gtk.Window):
         self._ftimer = 0.0
 
         if state == "idle":
-            self._anim   = random.choice(["idle", "running"])
+            self._anim   = "idle"
             self._stimer = random.uniform(4.0, 10.0)
 
         elif state == "walking":
@@ -340,8 +397,7 @@ class DesktopPet(Gtk.Window):
             self._target_x = random.uniform(margin, self._sw - self._tw - margin)
             self._target_y = random.uniform(margin, self._sh - self._th - margin)
             dx = self._target_x - self._x
-            dy = self._target_y - self._y
-            self._anim   = ("run_right" if dx >= 0 else "run_left") if abs(dx) >= abs(dy) else "waiting"
+            self._anim   = "run_right" if dx >= 0 else "run_left"
             self._stimer = 999.0
 
         elif state == "sleeping":
@@ -405,7 +461,7 @@ class DesktopPet(Gtk.Window):
             if dist < WALK_SPEED * 2:
                 self._enter("idle")
             else:
-                expected = ("run_right" if dx >= 0 else "run_left") if abs(dx) >= abs(dy) else "waiting"
+                expected = "run_right" if dx >= 0 else "run_left"
                 if self._anim != expected:
                     self._anim   = expected
                     self._fidx   = 0
