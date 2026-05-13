@@ -69,6 +69,7 @@ codex-pet --scale 0.75
 - **Pet list** — switch instantly between all pets in your library
 - **☑ Enable movement** — pet wanders around the screen using Run Right / Run Left animations
 - **☑ Run on startup** — creates/removes `~/.config/autostart/codex-pet.desktop`
+- **☑ Keep screen awake** — inhibits the screen saver via D-Bus (`org.freedesktop.ScreenSaver`); off by default so the screen sleeps normally
 - **Quit**
 
 ## Autostart

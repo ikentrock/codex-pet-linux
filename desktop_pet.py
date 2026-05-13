@@ -19,7 +19,7 @@ os.environ.setdefault('GDK_BACKEND', 'x11')
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('GdkPixbuf', '2.0')
-from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Gio
 import cairo
 from PIL import Image
 
@@ -148,6 +148,43 @@ def _remove_autostart():
         pass
 
 
+# ── Screen-sleep inhibit (D-Bus) ──────────────────────────────────────────────
+
+def _dbus_inhibit_sleep() -> int | None:
+    try:
+        proxy = Gio.DBusProxy.new_for_bus_sync(
+            Gio.BusType.SESSION, Gio.DBusProxyFlags.NONE, None,
+            "org.freedesktop.ScreenSaver",
+            "/org/freedesktop/ScreenSaver",
+            "org.freedesktop.ScreenSaver", None,
+        )
+        result = proxy.call_sync(
+            "Inhibit",
+            GLib.Variant("(ss)", ("codex-pet", "Keep screen awake")),
+            Gio.DBusCallFlags.NONE, -1, None,
+        )
+        return result.unpack()[0]
+    except Exception:
+        return None
+
+
+def _dbus_uninhibit_sleep(cookie: int):
+    try:
+        proxy = Gio.DBusProxy.new_for_bus_sync(
+            Gio.BusType.SESSION, Gio.DBusProxyFlags.NONE, None,
+            "org.freedesktop.ScreenSaver",
+            "/org/freedesktop/ScreenSaver",
+            "org.freedesktop.ScreenSaver", None,
+        )
+        proxy.call_sync(
+            "UnInhibit",
+            GLib.Variant("(u)", (cookie,)),
+            Gio.DBusCallFlags.NONE, -1, None,
+        )
+    except Exception:
+        pass
+
+
 # ── Widget ────────────────────────────────────────────────────────────────────
 
 class DesktopPet(Gtk.Window):
@@ -194,9 +231,12 @@ class DesktopPet(Gtk.Window):
         self._last_interact = time.monotonic()
 
         # ── Drag state ────────────────────────────────────────────
-        self._dragging   = False
+        self._dragging    = False
         self._last_drag_x = 0.0
         self._last_drag_y = 0.0
+
+        # ── Sleep inhibit ─────────────────────────────────────────
+        self._sleep_cookie = None
 
         # ── Events & draw directly on the window (no child widget) ───
         self.add_events(
@@ -209,7 +249,7 @@ class DesktopPet(Gtk.Window):
         self.connect("button-press-event",   self._on_press)
         self.connect("button-release-event", self._on_release)
         self.connect("motion-notify-event",  self._on_motion)
-        self.connect("destroy",              Gtk.main_quit)
+        self.connect("destroy",              self._on_destroy)
 
         GLib.timeout_add(16, self._tick)
         self.show_all()
@@ -314,6 +354,10 @@ class DesktopPet(Gtk.Window):
         row(start_mark + "Run on startup",
             lambda: _write_autostart(self._zip_path, self._scale)
                     if not _autostart_enabled() else _remove_autostart())
+
+        awake_mark = "☑  " if self._sleep_cookie is not None else "☐  "
+        row(awake_mark + "Keep screen awake",
+            lambda: self._apply_keep_awake(self._sleep_cookie is None))
         sep()
         row("Quit", Gtk.main_quit)
 
@@ -337,6 +381,18 @@ class DesktopPet(Gtk.Window):
             self._enter("walking")
         elif self._state == "walking":
             self._enter("idle")
+
+    def _apply_keep_awake(self, val: bool):
+        if val and self._sleep_cookie is None:
+            self._sleep_cookie = _dbus_inhibit_sleep()
+        elif not val and self._sleep_cookie is not None:
+            _dbus_uninhibit_sleep(self._sleep_cookie)
+            self._sleep_cookie = None
+
+    def _on_destroy(self, _):
+        if self._sleep_cookie is not None:
+            _dbus_uninhibit_sleep(self._sleep_cookie)
+        Gtk.main_quit()
 
     # ── Input ─────────────────────────────────────────────────────────────────
 
