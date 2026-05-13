@@ -111,6 +111,39 @@ def _load_pet(zip_path: str, scale: float):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ── Autostart ─────────────────────────────────────────────────────────────────
+
+AUTOSTART_FILE = os.path.expanduser("~/.config/autostart/codex-pet.desktop")
+_SCRIPT        = os.path.abspath(__file__)
+
+
+def _autostart_enabled() -> bool:
+    return os.path.isfile(AUTOSTART_FILE)
+
+
+def _write_autostart(zip_path: str, scale: float):
+    os.makedirs(os.path.dirname(AUTOSTART_FILE), exist_ok=True)
+    exec_cmd = f"python3 {_SCRIPT} {zip_path} --scale {scale}"
+    content = (
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Codex Pet\n"
+        f"Exec={exec_cmd}\n"
+        "Hidden=false\n"
+        "NoDisplay=false\n"
+        "X-GNOME-Autostart-enabled=true\n"
+    )
+    with open(AUTOSTART_FILE, "w") as f:
+        f.write(content)
+
+
+def _remove_autostart():
+    try:
+        os.remove(AUTOSTART_FILE)
+    except FileNotFoundError:
+        pass
+
+
 # ── Widget ────────────────────────────────────────────────────────────────────
 
 class DesktopPet(Gtk.Window):
@@ -230,6 +263,11 @@ class DesktopPet(Gtk.Window):
         move_item.connect("toggled", self._on_toggle_move)
         menu.append(move_item)
 
+        startup_item = Gtk.CheckMenuItem(label="Run on startup")
+        startup_item.set_active(_autostart_enabled())
+        startup_item.connect("toggled", self._on_toggle_startup)
+        menu.append(startup_item)
+
         menu.append(Gtk.SeparatorMenuItem())
 
         quit_item = Gtk.MenuItem(label="Quit")
@@ -245,6 +283,12 @@ class DesktopPet(Gtk.Window):
             self._enter("walking")
         elif not self._moving and self._state == "walking":
             self._enter("idle")
+
+    def _on_toggle_startup(self, item):
+        if item.get_active():
+            _write_autostart(self._zip_path, self._scale)
+        else:
+            _remove_autostart()
 
     # ── Input ─────────────────────────────────────────────────────────────────
 
