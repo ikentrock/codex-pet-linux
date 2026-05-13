@@ -27,15 +27,15 @@ COLS, ROWS     = 8, 9
 
 # (spritesheet_row, fps) — frame counts are detected per-pet at load time
 ANIM_DEFS = {
-    "idle":    (0, 6),
-    "walk_r":  (1, 10),
-    "walk_l":  (2, 10),
-    "action":  (3, 8),
-    "jump":    (4, 10),
-    "sleep":   (5, 3),
-    "walk_d":  (6, 10),
-    "idle2":   (7, 6),
-    "special": (8, 8),
+    "idle":       (0, 6),
+    "run_right":  (1, 10),
+    "run_left":   (2, 10),
+    "waving":     (3, 8),
+    "jumping":    (4, 10),
+    "failed":     (5, 3),
+    "waiting":    (6, 10),
+    "running":    (7, 6),
+    "review":     (8, 8),
 }
 
 WALK_SPEED  = 0.8   # px/tick at ~60 fps
@@ -323,7 +323,7 @@ class DesktopPet(Gtk.Window):
             if not self._dragging:
                 # Start of drag — switch to lift animation
                 self._dragging = True
-                self._anim     = "jump"
+                self._anim     = "jumping"
                 self._fidx     = 0
                 self._ftimer   = 0.0
             nx = int(self._drag_win_x + dx)
@@ -339,7 +339,7 @@ class DesktopPet(Gtk.Window):
         self._ftimer = 0.0
 
         if state == "idle":
-            self._anim   = random.choice(["idle", "idle2"])
+            self._anim   = random.choice(["idle", "running"])
             self._stimer = random.uniform(4.0, 10.0)
 
         elif state == "walking":
@@ -348,23 +348,23 @@ class DesktopPet(Gtk.Window):
             self._target_y = random.uniform(margin, self._sh - self._th - margin)
             dx = self._target_x - self._x
             dy = self._target_y - self._y
-            self._anim   = ("walk_r" if dx >= 0 else "walk_l") if abs(dx) >= abs(dy) else "walk_d"
+            self._anim   = ("run_right" if dx >= 0 else "run_left") if abs(dx) >= abs(dy) else "waiting"
             self._stimer = 999.0
 
         elif state == "sleeping":
-            self._anim   = "sleep"
+            self._anim   = "failed"
             self._stimer = random.uniform(10.0, 20.0)
 
         elif state == "action":
-            self._anim   = "action"
+            self._anim   = "waving"
             self._stimer = 2.0
 
         elif state == "jump":
-            self._anim   = "jump"
+            self._anim   = "jumping"
             self._stimer = 1.5
 
         elif state == "special":
-            self._anim   = "special"
+            self._anim   = "review"
             self._stimer = 2.5
 
     def _pick_next(self):

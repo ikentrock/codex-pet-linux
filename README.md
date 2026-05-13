@@ -92,13 +92,13 @@ spritesheet.webp  # RGBA spritesheet: 192×208px tiles, 8 cols × 9 rows
 | Row | Animation |
 |-----|-----------|
 | 0 | Idle |
-| 1 | Walk right |
-| 2 | Walk left |
-| 3 | Action |
-| 4 | Jump / lifted |
-| 5 | Sleep |
-| 6 | Walk down |
-| 7 | Idle variant |
-| 8 | Special |
+| 1 | Run Right |
+| 2 | Run Left |
+| 3 | Waving |
+| 4 | Jumping |
+| 5 | Failed |
+| 6 | Waiting |
+| 7 | Running |
+| 8 | Review |
 
 Blank frames at the end of each row are detected and skipped automatically.
