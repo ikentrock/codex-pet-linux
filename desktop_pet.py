@@ -202,16 +202,15 @@ class DesktopPet(Gtk.Window):
         # ── Widgets ───────────────────────────────────────────────
         area = Gtk.DrawingArea()
         area.connect("draw", self._on_draw)
-        self.add(area)
-
-        self.add_events(
+        area.add_events(
             Gdk.EventMask.BUTTON_PRESS_MASK |
             Gdk.EventMask.BUTTON_RELEASE_MASK |
             Gdk.EventMask.POINTER_MOTION_MASK
         )
-        self.connect("button-press-event",   self._on_press)
-        self.connect("button-release-event", self._on_release)
-        self.connect("motion-notify-event",  self._on_motion)
+        area.connect("button-press-event",   self._on_press)
+        area.connect("button-release-event", self._on_release)
+        area.connect("motion-notify-event",  self._on_motion)
+        self.add(area)
         self.connect("destroy", Gtk.main_quit)
 
         GLib.timeout_add(16, self._tick)
@@ -280,9 +279,9 @@ class DesktopPet(Gtk.Window):
 
     def _on_toggle_move(self, item):
         self._moving = item.get_active()
-        if self._moving and self._state == "idle":
+        if self._moving:
             self._enter("walking")
-        elif not self._moving and self._state == "walking":
+        elif self._state == "walking":
             self._enter("idle")
 
     def _on_toggle_startup(self, item):
@@ -412,6 +411,11 @@ class DesktopPet(Gtk.Window):
             if dist < WALK_SPEED * 2:
                 self._enter("idle")
             else:
+                expected = ("run_right" if dx >= 0 else "run_left") if abs(dx) >= abs(dy) else "waiting"
+                if self._anim != expected:
+                    self._anim   = expected
+                    self._fidx   = 0
+                    self._ftimer = 0.0
                 self._x += dx / dist * WALK_SPEED
                 self._y += dy / dist * WALK_SPEED
                 self._x  = max(0.0, min(float(self._sw - self._tw), self._x))
