@@ -166,12 +166,10 @@ class DesktopPet(Gtk.Window):
         self.set_skip_pager_hint(True)
         self.set_resizable(False)
 
-        monitor = screen.get_display().get_primary_monitor()
-        if monitor:
-            geo = monitor.get_geometry()
-            self._sw, self._sh = geo.width, geo.height
-        else:
-            self._sw, self._sh = screen.get_width(), screen.get_height()
+        display = screen.get_display()
+        monitor = display.get_primary_monitor() or display.get_monitor(0)
+        geo     = monitor.get_geometry()
+        self._sw, self._sh = geo.width, geo.height
 
         self._tw = int(TILE_W * scale)
         self._th = int(TILE_H * scale)
@@ -193,25 +191,22 @@ class DesktopPet(Gtk.Window):
         self._last_interact = time.monotonic()
 
         # ── Drag state ────────────────────────────────────────────
-        self._dragging    = False
-        self._drag_root_x = 0.0
-        self._drag_root_y = 0.0
-        self._drag_win_x  = 0
-        self._drag_win_y  = 0
+        self._dragging   = False
+        self._last_drag_x = 0.0
+        self._last_drag_y = 0.0
 
-        # ── Widgets ───────────────────────────────────────────────
-        area = Gtk.DrawingArea()
-        area.connect("draw", self._on_draw)
-        area.add_events(
-            Gdk.EventMask.BUTTON_PRESS_MASK |
+        # ── Events & draw directly on the window (no child widget) ───
+        self.add_events(
+            Gdk.EventMask.BUTTON_PRESS_MASK   |
             Gdk.EventMask.BUTTON_RELEASE_MASK |
-            Gdk.EventMask.POINTER_MOTION_MASK
+            Gdk.EventMask.POINTER_MOTION_MASK |
+            Gdk.EventMask.BUTTON1_MOTION_MASK
         )
-        area.connect("button-press-event",   self._on_press)
-        area.connect("button-release-event", self._on_release)
-        area.connect("motion-notify-event",  self._on_motion)
-        self.add(area)
-        self.connect("destroy", Gtk.main_quit)
+        self.connect("draw",                 self._on_draw)
+        self.connect("button-press-event",   self._on_press)
+        self.connect("button-release-event", self._on_release)
+        self.connect("motion-notify-event",  self._on_motion)
+        self.connect("destroy",              Gtk.main_quit)
 
         GLib.timeout_add(16, self._tick)
         self.show_all()
@@ -296,9 +291,8 @@ class DesktopPet(Gtk.Window):
         if ev.button == 3:
             self._show_menu(ev)
             return
-        self._drag_root_x = ev.x_root
-        self._drag_root_y = ev.y_root
-        self._drag_win_x, self._drag_win_y = self.get_position()
+        self._last_drag_x = ev.x_root
+        self._last_drag_y = ev.y_root
         self._dragging = False
 
     def _on_release(self, _, ev):
@@ -316,19 +310,19 @@ class DesktopPet(Gtk.Window):
     def _on_motion(self, _, ev):
         if not (ev.state & Gdk.ModifierType.BUTTON1_MASK):
             return
-        dx = ev.x_root - self._drag_root_x
-        dy = ev.y_root - self._drag_root_y
-        if abs(dx) > 4 or abs(dy) > 4:
-            if not self._dragging:
-                # Start of drag — switch to lift animation
-                self._dragging = True
-                self._anim     = "jumping"
-                self._fidx     = 0
-                self._ftimer   = 0.0
-            nx = int(self._drag_win_x + dx)
-            ny = int(self._drag_win_y + dy)
-            self._x, self._y = float(nx), float(ny)
-            self.move(nx, ny)
+        ddx = ev.x_root - self._last_drag_x
+        ddy = ev.y_root - self._last_drag_y
+        self._last_drag_x = ev.x_root
+        self._last_drag_y = ev.y_root
+        if not self._dragging and (abs(ddx) > 0 or abs(ddy) > 0):
+            self._dragging = True
+            self._anim     = "jumping"
+            self._fidx     = 0
+            self._ftimer   = 0.0
+        if self._dragging:
+            self._x = max(0.0, min(float(self._sw - self._tw), self._x + ddx))
+            self._y = max(0.0, min(float(self._sh - self._th), self._y + ddy))
+            self.move(int(self._x), int(self._y))
 
     # ── State machine ─────────────────────────────────────────────────────────
 
